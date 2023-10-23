@@ -1,0 +1,86 @@
+tags:
+- "mig-blue-green-bootstrapping"
+steps:
+- id: create_new_cloud_source_repo
+  name: "gcr.io/cloud-builders/gcloud"
+  script: |
+    #!/bin/bash
+    set -e
+
+    echo "(Re)Creating source code repository"
+
+    gcloud source repos delete \
+        "copy-of-mig-blue-green" \
+        --quiet || true
+    
+    gcloud source repos create \
+        "copy-of-mig-blue-green" \
+        --quiet
+
+- id: copy_demo_source_into_new_cloud_source_repo
+  name: "gcr.io/cloud-builders/gcloud"
+  env:
+    - "PROJECT_ID=$PROJECT_ID"
+    - "PROJECT_NUMBER=$PROJECT_NUMBER"
+  script: |
+    #!/bin/bash
+    set -e
+
+    readonly GIT_REPO="https://github.com/GoogleCloudPlatform/cloud-build-samples.git"
+
+    echo "Cloning demo source repo"
+    mkdir /workspace/from/
+    cd /workspace/from/
+    git clone $GIT_REPO ./original
+    cd ./original
+
+    echo "Cloning new empty repo"
+    mkdir /workspace/to/
+    cd /workspace/to/
+    gcloud source repos clone \
+        "copy-of-mig-blue-green"
+    cd ./copy-of-mig-blue-green
+
+    echo "Making a copy"
+    cp -r /workspace/from/original/mig-blue-green/* ./
+
+    echo "Setting git identity"
+    git config user.email \
+        "$PROJECT_NUMBER@cloudbuild.gserviceaccount.com"
+    git config user.name \
+        "Cloud Build"
+
+    echo "Commit & push"
+    git add .
+    git commit \
+        -m "A copy of $GIT_REPO"
+    git push
+
+- id: add_pipeline_triggers
+  name: "gcr.io/cloud-builders/gcloud"
+  env:
+    - "PROJECT_ID=$PROJECT_ID"
+  script: |
+    #!/bin/bash
+    set -e
+
+    echo "(Re)Creating destroy trigger"
+    gcloud builds triggers delete "destroy" --quiet || true
+    gcloud builds triggers create manual \
+        --name="destroy" \
+        --repo="https://source.developers.google.com/p/$PROJECT_ID/r/copy-of-mig-blue-green" \
+        --branch="master" \
+        --build-config="pipelines/destroy.cloudbuild.yaml" \
+        --repo-type=CLOUD_SOURCE_REPOSITORIES \
+        --quiet
+
+    echo "(Re)Creating apply trigger"
+    gcloud builds triggers delete "apply" --quiet || true
+    gcloud builds triggers create cloud-source-repositories \
+        --name="apply" \
+        --repo="copy-of-mig-blue-green" \
+        --branch-pattern="master" \
+        --build-config="pipelines/apply.cloudbuild.yaml" \
+        --included-files="infra/main.tfvars" \
+        --quiet
+

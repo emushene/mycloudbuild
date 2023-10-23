@@ -19,5 +19,7 @@ provider "google" {
     region = "europe-west2"
     project = "kenya-402404"
     credential = "GOOGLE_APPLICATION_CREDENTIALS"
+
+    test=""
   
 }
